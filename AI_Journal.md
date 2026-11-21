@@ -243,3 +243,19 @@ A running log of conversations with the AI assistant (AI assistant using Copilot
 **Assistant:** Confirmed D2: policy-service owns `ClaimantContact` and publishes `claimants.contact-updated`. Updated `technical-design.md` (D2 row and section 3.1) and the `PRD.md` topics table, which previously listed policy-service or claims-service as producer. Not committed.
 
 ---
+
+## 2026-11-21 15:10 (+05:30)
+
+**User:** did you update the journal
+
+**Assistant:** Confirmed the D2 entry was logged and added this entry.
+
+---
+
+## 2026-11-21 15:12 (+05:30)
+
+**User:** create the claims system code with clean architecture in this given location - "C:\Users\shruthi.va\Documents\Chubb\backend-shruthi"
+
+**Assistant:** Asked scope (common + policy-service + claims-service) and whether to write unverified code since JDK 17 and Maven are not installed. User chose that scope and accepted unverified code. Wrote `common`, `policy-service` (domain, ports, services, JPA and outbox adapters, REST controllers) and `claims-service` (domain rules, lifecycle state machine, intake, phone verification, reserves, role-scoped queries, policy projection listener, outbox, REST controller and DTOs). Nothing compiled or tested. Deviations from the TDD to flag: OTP check sits in claims-service behind a stub (`123456`); reserves are claim-level fields, not a reserves table; no assign, queue, or dashboard routes; notification-service needs claimant contact details, which conflicts with the no-PII rule on Kafka. Not committed.
+
+---
