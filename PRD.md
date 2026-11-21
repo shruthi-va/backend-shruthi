@@ -18,7 +18,7 @@ Chubb APAC processes motor and property claims across six markets. Three problem
 2. **Staff workload is fragmented.** Staff manage work across shared inboxes and spreadsheets, with no consolidated view of their queue.
 3. **Managers lack a real-time view.** Managers cannot see outstanding claims or liability exposure as it changes.
 
-This product is a set of Spring Boot microservices that expose REST APIs, documented and verified through Swagger (OpenAPI). It addresses all three problems through one claims lifecycle, role-based access, status notifications, and real-time reporting.
+This product is a set of Spring Boot microservices that expose REST APIs, documented and verified through Swagger (OpenAPI). It addresses all three problems through one claims lifecycle, role-based access, and real-time reporting.
 
 ## 2. Scope
 
@@ -31,7 +31,6 @@ This product is a set of Spring Boot microservices that expose REST APIs, docume
 - Policy management.
 - Staff work queues and assignment.
 - Manager dashboards for outstanding claims and liability exposure.
-- Status notifications to claimants by email and SMS (SMS logged only for now).
 - Authentication and authorization with OAuth2 and Keycloak.
 - Event streaming with Apache Kafka.
 - Local development without Docker.
@@ -41,8 +40,6 @@ This product is a set of Spring Boot microservices that expose REST APIs, docume
 - Frontend or UI of any kind. Swagger UI is the only verification tool.
 - Currency conversion (FX). Each market reports in its registered currency.
 - Market-specific claim types or rules. All six markets share one set for now.
-- Real SMS provider integration. SMS uses a logging sender for now.
-- Notifications in languages other than English.
 - Payment disbursement. The system records settlement decisions only.
 - Docker-based deployment.
 
@@ -95,15 +92,15 @@ Claimants who report by phone or email do not have an account at the time of rep
 
 ### 6.1 Statuses
 
-| Status | Meaning | Notifies claimant |
-|---|---|---|
-| `SUBMITTED` | Claim received and validated. | Yes |
-| `UNDER_REVIEW` | Assigned to staff for assessment. | Yes |
-| `PENDING_DECISION` | Staff recommendation recorded; awaiting Manager decision. | No |
-| `APPROVED` | Manager approved the settlement. | Yes |
-| `REJECTED` | Manager rejected the claim. | Yes |
-| `SETTLED` | Settlement recorded as paid. | Yes |
-| `WITHDRAWN` | Claimant withdrew the claim. | Yes |
+| Status | Meaning |
+|---|---|
+| `SUBMITTED` | Claim received and validated. |
+| `UNDER_REVIEW` | Assigned to staff for assessment. |
+| `PENDING_DECISION` | Staff recommendation recorded; awaiting Manager decision. |
+| `APPROVED` | Manager approved the settlement. |
+| `REJECTED` | Manager rejected the claim. |
+| `SETTLED` | Settlement recorded as paid. |
+| `WITHDRAWN` | Claimant withdrew the claim. |
 
 Every status change is recorded in status history with the actor, the time, and the reason.
 
@@ -121,7 +118,6 @@ Exact transition rules are enforced in one state-machine class in claims-service
 - Claims staff propose a reserve amount with a justification.
 - A Manager approves or rejects the proposal.
 - Approved reserves update the claim's outstanding exposure.
-- Reserve changes do not notify claimants.
 
 ## 8. Staff workload
 
@@ -138,17 +134,7 @@ Exact transition rules are enforced in one state-machine class in claims-service
 
 Dashboards are served through REST endpoints. Data is built from events, so it can lag the source of truth by seconds.
 
-## 10. Notifications
-
-- Triggered by `ClaimStatusChanged` events, only when the status actually changes.
-- Only the statuses marked "Yes" in section 6.1 notify the claimant.
-- Channels: email (sent) and SMS (logged by a logging sender for now).
-- Language: English only.
-- Each claimant can enable or disable each channel.
-- Messages contain claim reference and status, not personal data.
-- Delivery is at-least-once. Notifications are deduplicated by event ID. Failed sends are retried, and messages that still fail go to a dead-letter topic.
-
-## 11. Non-functional requirements
+## 10. Non-functional requirements
 
 | Area | Requirement |
 |---|---|
@@ -164,18 +150,17 @@ Dashboards are served through REST endpoints. Data is built from events, so it c
 | Testing | Unit tests for rules; `@DataJpaTest` with H2; `@EmbeddedKafka` for messaging; `spring-security-test` JWTs for roles |
 | Local setup | No Docker |
 
-## 12. Services
+## 11. Services
 
 | Service | Responsibility |
 |---|---|
 | `common` | Security configuration, error handling, event envelope, OpenAPI configuration. |
 | `policy-service` | Policies, ownership, claimant–policy links. |
 | `claims-service` | Claims, lifecycle, status history, reserves, queues, outbox. |
-| `notification-service` | Consumes status events, recipient preferences, email and SMS sending, dead-letter handling. |
 | `assessment-service` | Folded into `claims-service` for the first release (recommendations). |
 | `reporting-service` (planned) | Manager dashboards built from Kafka events. |
 
-## 13. Key API areas
+## 12. Key API areas
 
 Final endpoint list is confirmed during detailed design. Expected areas:
 
@@ -185,20 +170,17 @@ Final endpoint list is confirmed during detailed design. Expected areas:
 - `/policies` (manage, read)
 - `/queues/me` (staff workload)
 - `/dashboards/...` (manager views)
-- `/notifications/claims/{claimId}`, `/recipients/me/preferences`, `/notifications/dead-letters`
 
-## 14. Kafka topics (initial)
+## 13. Kafka topics (initial)
 
 | Topic | Producer | Consumers | Key |
 |---|---|---|---|
-| `claims.status-changed` | claims-service | notification-service, reporting-service | `claimId` |
+| `claims.status-changed` | claims-service | reporting-service | `claimId` |
 | `claims.reserve-changed` | claims-service | reporting-service | `claimId` |
-| `claimants.contact-updated` | policy-service | notification-service | `ownerSubject` |
-| `notifications.dead-letter` | notification-service | operators | `claimId` |
 
 Event payloads carry IDs, status, market, and amounts. They do not carry names, email addresses, or phone numbers.
 
-## 15. Success criteria
+## 14. Success criteria
 
 - Claimants can see their own claims and each status change, without contacting staff.
 - Staff can see their queue in one place, for their market.
@@ -207,17 +189,16 @@ Event payloads carry IDs, status, market, and amounts. They do not carry names, 
 - Every endpoint is documented and callable from Swagger UI.
 - The full system runs locally with no Docker.
 
-## 16. Milestones
+## 15. Milestones
 
 1. **Foundation:** build tooling, `common` module, Keycloak realm, local Kafka.
 2. **Policies and intake:** `policy-service`, claim submission, ownership checks, deadline and threshold rules.
 3. **Lifecycle and reserves:** state machine, status history, outbox, reserve propose and approve.
 4. **Queues and decisions:** staff queue, recommendation, Manager decision, settlement.
-5. **Notifications:** `notification-service`, English email, logging SMS, dead-letter handling.
-6. **Dashboards:** `reporting-service` for outstanding claims and exposure.
-7. **Hardening:** tests, Swagger verification, documentation.
+5. **Dashboards:** `reporting-service` for outstanding claims and exposure.
+6. **Hardening:** tests, Swagger verification, documentation.
 
-## 17. Open questions
+## 16. Open questions
 
 | # | Question | Impact |
 |---|---|---|
@@ -228,7 +209,7 @@ Event payloads carry IDs, status, market, and amounts. They do not carry names, 
 | Q5 | What is the OTP delivery channel for phone-submitted claim verification? | Section 5.2 |
 | Q6 | What are the internal SLA durations for queue due dates? | Section 8 |
 
-## 18. Assumptions
+## 17. Assumptions
 
 - Keycloak and Kafka run as local installs. Docker is not used.
 - Keycloak roles appear in `realm_access.roles` as `CLAIMANT`, `CLAIMS_STAFF`, and `MANAGER`.

@@ -36,7 +36,11 @@ class ClaimEventPublisher {
                 change.fromStatus() == null ? null : change.fromStatus().name(),
                 change.toStatus().name(),
                 claim.getOwnerSubject(),
-                change.changedAt());
+                change.changedAt(),
+                claim.getClaimType().name(),
+                claim.getClaimedAmount(),
+                claim.getCurrency(),
+                claim.isAuditFlag());
         outbox.append(ClaimTopics.STATUS_CHANGED, claim.getId().toString(),
                 DomainEvent.of(STATUS_EVENT_TYPE, claim.getId().toString(), claim.getMarket(), payload));
     }

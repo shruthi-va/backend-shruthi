@@ -4,8 +4,9 @@ info:
   version: 0.1.0
   description: |
     REST APIs for the claims platform (motor and property claims across the APAC markets).
-    Two services are described here: **policy-service** (policies and claimant contacts) and
-    **claims-service** (claim intake, lifecycle, reserves and queries).
+    Three services are described here: **policy-service** (policies and claimant contacts),
+    **claims-service** (claim intake, lifecycle, reserves and queries) and **reporting-service**
+    (outstanding claims dashboard, read-only).
 
     Every call needs an OAuth2 bearer token issued by Keycloak. The token carries a `market` claim
     and a realm role of `CLAIMANT`, `CLAIMS_STAFF` or `MANAGER`. Access rules are enforced per endpoint and
@@ -17,13 +18,17 @@ servers:
     description: claims-service (local)
   - url: http://localhost:8081
     description: policy-service (local)
+  - url: http://localhost:8084
+    description: reporting-service (local)
 tags:
   - name: Policies
     description: Policy catalogue and claimant ownership (policy-service)
   - name: Claimant contacts
-    description: Contact details and notification preferences (policy-service)
+    description: Contact details (policy-service)
   - name: Claims
     description: Claim intake, lifecycle, reserves and queries (claims-service)
+  - name: Outstanding claims
+    description: Read-only dashboard of open claims, managers only (reporting-service)
 
 security:
   - bearerAuth: []
@@ -156,10 +161,8 @@ paths:
     put:
       tags: [Claimant contacts]
       operationId: upsertOwnContact
-      summary: Create or update the calling claimant's contact details (claimant)
       description: |
-        Publishes a `claimants.contact-updated` event only when the contact is new or the notification
-        preferences change. Staff and managers receive 403.
+        Create or update the calling claimant's contact details. Staff and managers receive 403.
       requestBody:
         required: true
         content:
@@ -568,6 +571,86 @@ paths:
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
 
+  /api/dashboards/outstanding/summary:
+    get:
+      tags: [Outstanding claims]
+      operationId: outstandingSummary
+      summary: Outstanding claim counts and amounts (manager)
+      description: |
+        Counts and claimed totals for open claims (SUBMITTED, UNDER_REVIEW, PENDING_DECISION, APPROVED),
+        grouped by market, status, claim type and currency. Settled, rejected and withdrawn claims are excluded.
+        Managers only; staff receive 403. Data comes from `claims.status-changed` events, so it can lag
+        claims-service slightly.
+      parameters:
+        - name: market
+          in: query
+          required: false
+          description: Restrict to one market (for example `IN`). Omit for all markets.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Summary rows, one per market, status, claim type and currency
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OutstandingSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/dashboards/outstanding/claims:
+    get:
+      tags: [Outstanding claims]
+      operationId: outstandingClaims
+      summary: Paginated list of outstanding claims (manager)
+      description: |
+        Open claims, newest update first. Same status filter as the summary. Managers only; staff receive 403.
+      parameters:
+        - name: market
+          in: query
+          required: false
+          description: Restrict to one market. Omit for all markets.
+          schema:
+            type: string
+        - name: claimType
+          in: query
+          required: false
+          description: Restrict to one claim type (for example `MOTOR` or `PROPERTY`).
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          description: Zero-based page index. Values below 0 are treated as 0.
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          required: false
+          description: Page size. Values are clamped to the range 1 to 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: One page of outstanding claims
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutstandingClaimPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -625,6 +708,69 @@ components:
             $ref: '#/components/schemas/ProblemDetail'
 
   schemas:
+    OutstandingSummary:
+      type: object
+      properties:
+        market:
+          type: string
+          example: IN
+        status:
+          type: string
+          enum: [SUBMITTED, UNDER_REVIEW, PENDING_DECISION, APPROVED]
+        claimType:
+          type: string
+          example: MOTOR
+        currency:
+          type: string
+          example: INR
+        claimCount:
+          type: integer
+          format: int64
+        totalClaimedAmount:
+          type: number
+          format: decimal
+          example: 250000.00
+    OutstandingClaim:
+      type: object
+      properties:
+        claimId:
+          type: string
+          format: uuid
+        claimNumber:
+          type: string
+        market:
+          type: string
+        status:
+          type: string
+          enum: [SUBMITTED, UNDER_REVIEW, PENDING_DECISION, APPROVED]
+        claimType:
+          type: string
+        claimedAmount:
+          type: number
+          format: decimal
+        currency:
+          type: string
+        auditFlag:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+    OutstandingClaimPage:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutstandingClaim'
+        page:
+          type: integer
+        size:
+          type: integer
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
     ProblemDetail:
       type: object
       properties:
@@ -725,12 +871,6 @@ components:
           type: string
           pattern: '^\+?[0-9 ()-]{6,32}$'
           example: '+91 98765 43210'
-        emailOptIn:
-          type: boolean
-          default: false
-        smsOptIn:
-          type: boolean
-          default: false
 
     OwnContactRequest:
       type: object
@@ -744,12 +884,6 @@ components:
         phone:
           type: string
           pattern: '^\+?[0-9 ()-]{6,32}$'
-        emailOptIn:
-          type: boolean
-          default: false
-        smsOptIn:
-          type: boolean
-          default: false
 
     ContactResponse:
       type: object
@@ -767,10 +901,6 @@ components:
         phone:
           type: string
           nullable: true
-        emailOptIn:
-          type: boolean
-        smsOptIn:
-          type: boolean
 
     FileClaimRequest:
       type: object

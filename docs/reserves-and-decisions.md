@@ -15,7 +15,7 @@ sequenceDiagram
     M->>CL: POST /claims/{id}/reserves/{rid}/approve
     CL->>K: claims.reserve-changed (APPROVED)
     S->>CL: POST /claims/{id}/recommendation
-    CL->>K: claims.status-changed (PENDING_DECISION, no notification)
+    CL->>K: claims.status-changed (PENDING_DECISION)
     M->>CL: POST /claims/{id}/decision (approve or reject)
     CL->>K: claims.status-changed (APPROVED or REJECTED)
 ```

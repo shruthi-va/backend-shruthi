@@ -23,7 +23,6 @@ A set of Spring Boot 3.3 microservices on Java 17, built with Maven. Each servic
 | `common` | n/a (library) | n/a | Security config, `ProblemDetail` error handling, `DomainEvent` envelope, OpenAPI config |
 | `policy-service` | 8081 | H2 `policydb` | Policies, policy ownership, claimant contact details |
 | `claims-service` | 8082 | H2 `claimsdb` | Claims, lifecycle, status history, reserves, recommendations (assessment), queues, outbox, local policy projection |
-| `notification-service` | 8083 | H2 `notificationdb` | Recipient preferences, notification processing, send log, dead-letter records |
 | `reporting-service` | 8084 | H2 `reportingdb` | Read model for manager dashboards, built from Kafka events |
 
 Each service is an independent Spring Boot application under the parent POM `claims-platform`. Diagrams: [architecture.md](./architecture.md).
@@ -46,7 +45,6 @@ Field types are conceptual. Java types are chosen during implementation.
 - `id`, `contactId` (unique, issued by staff for phone/email reporters)
 - `ownerSubject` (nullable until verified)
 - `phone`, `email` (personal data; never sent in Kafka)
-- Channel flags: `emailEnabled`, `smsEnabled`
 
 ### 3.2 claims-service
 
@@ -75,19 +73,13 @@ Field types are conceptual. Java types are chosen during implementation.
 
 **Market configuration** (application config, not a table in the first release): market code, currency code, and per-currency audit threshold. The PRD does not yet define how the threshold applies to non-INR markets (Q1, open).
 
-### 3.3 notification-service
+### 3.3 reporting-service
 
-- **Recipient**: `ownerSubject` (unique), `email`, `phone`, `emailEnabled`, `smsEnabled`. Filled from `claimants.contact-updated`.
+Read model only. Rebuilt from events. Table `claim_snapshot` (migration `V1__init.sql`).
+- **ClaimSnapshot**: `claimId` (PK), `claimNumber`, `market`, `status`, `claimType`, `claimedAmount`, `currency`, `auditFlag`, `updatedAt`.
 - **ProcessedEvent**: `eventId` (unique), `processedAt`. Used for idempotency.
-- **NotificationLog**: `id`, `eventId`, `claimId`, `channel` (EMAIL or SMS), `status` (SENT, FAILED, SKIPPED), `attempts`, `createdAt`. No message body is stored beyond what is needed for support.
-- **DeadLetterRecord**: `id`, `eventId`, `claimId`, `reason`, `payload`, `createdAt`.
 
-### 3.4 reporting-service
-
-Read model only. Rebuilt from events.
-- **ClaimStatusSnapshot**: `claimId` (PK), `market`, `status`, `claimType`, `claimedAmount`, `currency`, `auditFlag`, `updatedAt`.
-- **ReserveSnapshot**: `reserveId` (PK), `claimId`, `market`, `amount`, `currency`, `status`.
-- **ProcessedEvent**: as in notification-service.
+Reserve snapshots are not built yet. Reserve reporting is deferred with the exposure dashboard (section 10).
 
 Aggregates for the dashboards are computed by query, not stored.
 
@@ -102,7 +94,7 @@ Aggregates for the dashboards are computed by query, not stored.
   - PENDING_DECISION → APPROVED or REJECTED (manager)
   - APPROVED → SETTLED (manager)
 - Each transition writes one `StatusHistory` row and one `OutboxEvent` in the same transaction.
-- Only transitions where the status changes produce `ClaimStatusChanged`. Reserve and recommendation events do not notify claimants (PRD section 10).
+- Only transitions where the status changes produce `ClaimStatusChanged`.
 
 ## 5. Business rule implementation
 
@@ -180,7 +172,7 @@ Staff-recorded claims are visible only to staff until verified.
 | `GET /policies` | CLAIMANT (own), CLAIMS_STAFF (market), MANAGER | List policies. |
 | `POST /claimants/contacts` | CLAIMS_STAFF | Record a contact for a phone or email reporter. |
 | `POST /claimants/verify-policy` | CLAIMANT | Verify policy number and OTP for claim linking (see 7.4). |
-| `PUT /claimants/me/contact` | CLAIMANT | Update own contact details. Publishes `claimants.contact-updated`. |
+| `PUT /claimants/me/contact` | CLAIMANT | Update own contact details. |
 
 ### 7.3 Local policy projection (decided)
 
@@ -201,11 +193,9 @@ The projection can lag the source by a few seconds. Consumers apply an event onl
 
 | Topic | Producer | Consumers | Key | Partitions (proposed) |
 |---|---|---|---|---|
-| `claims.status-changed` | claims-service | notification-service, reporting-service | `claimId` | 6 |
+| `claims.status-changed` | claims-service | reporting-service | `claimId` | 6 |
 | `claims.reserve-changed` | claims-service | reporting-service | `claimId` | 6 |
 | `policies.changed` | policy-service | claims-service | `policyId` | 3 |
-| `claimants.contact-updated` | policy-service | notification-service | `ownerSubject` | 3 |
-| `notifications.dead-letter` | notification-service | operators | `claimId` | 1 |
 
 Topic names are fixed by the PRD. Partition counts are for local testing.
 
@@ -218,7 +208,7 @@ Topic names are fixed by the PRD. Partition counts are for local testing.
 
 ### 8.3 ClaimStatusChanged payload
 
-`claimId`, `claimNumber`, `market`, `fromStatus`, `toStatus`, `ownerSubject` (token sub, needed to find the recipient; not personal data), `changedAt`.
+`claimId`, `claimNumber`, `market`, `fromStatus`, `toStatus`, `ownerSubject` (token sub; not personal data), `changedAt`. For reporting-service, also `claimType`, `claimedAmount`, `currency`, `auditFlag`, so the snapshot can be built without calling claims-service. None of these is personal data.
 
 ### 8.4 Transactional outbox
 
@@ -229,16 +219,15 @@ Topic names are fixed by the PRD. Partition counts are for local testing.
 
 ### 8.5 Consumers
 
-- Consumer group per service: `notification-service`, `reporting-service`.
+- Consumer group: `reporting-service`.
 - Offsets committed after the local database transaction completes.
-- Retry: 3 attempts with exponential backoff. Records that still fail go to `<topic>.DLT` through `DefaultErrorHandler`. For notifications, the dead-letter record also goes to `notifications.dead-letter`.
+- Retry: 3 attempts with exponential backoff. Records that still fail go to `<topic>.DLT` through `DefaultErrorHandler`.
 
 ## 9. Consistency and reliability
 
 ### 9.1 Idempotency
 
 - Consumers check `ProcessedEvent.eventId` inside the same transaction as their side effects.
-- Notification sends are keyed by `eventId + channel`, so a retry never sends twice.
 
 ### 9.2 Duplicate handling
 
@@ -249,22 +238,15 @@ Repeated events are skipped if `eventId` is already in `ProcessedEvent`. Events 
 - `@Version` on `Claim` and `Policy`. Concurrent updates return 409 Conflict.
 - Staff assignment and manager decisions are protected by this check.
 
-### 9.4 Notification rules
-
-- Notifies only for SUBMITTED, UNDER_REVIEW, APPROVED, REJECTED, SETTLED, WITHDRAWN.
-- Skips when the recipient's channel is disabled.
-- Email in English. Templates are in the `notification-service` resources folder.
-- SMS uses a `LoggingSmsSender` behind the `SmsSender` interface. A real provider replaces it later.
-- Retries: 3 attempts per channel. Failures go to the dead-letter store.
-
 ## 10. Reporting
 
-- `reporting-service` consumes `claims.status-changed` and `claims.reserve-changed` and maintains snapshots.
-- Dashboard endpoints (MANAGER only):
-  - `GET /dashboards/outstanding`: count and total claimed amount by market, status, and claimType. Currencies are not summed across markets, so totals are per currency.
-  - `GET /dashboards/exposure`: approved reserves plus proposed reserves by market and currency.
-  - `GET /dashboards/audit`: claims with `auditFlag = true`.
-- Freshness target: under 10 seconds behind the source change (PRD section 15).
+- `reporting-service` consumes `claims.status-changed` and maintains the `claim_snapshot` read model. It has no REST call to claims-service.
+- "Outstanding" means non-terminal: SUBMITTED, UNDER_REVIEW, PENDING_DECISION, APPROVED. SETTLED, REJECTED and WITHDRAWN are excluded.
+- Dashboard endpoints (MANAGER only; staff get 403):
+  - `GET /api/dashboards/outstanding/summary`: count and total claimed amount by market, status, claimType and currency. Currencies are not summed across markets, so totals are per currency. Optional `market` filter.
+  - `GET /api/dashboards/outstanding/claims`: paginated list of outstanding claims, newest update first. Optional `market` and `claimType` filters; `page` (from 0) and `size` (clamped to 1 to 100, default 20).
+- Deferred, not built yet (the user asked only for outstanding claims): `reserves` consumption from `claims.reserve-changed`, `GET /dashboards/exposure` and `GET /dashboards/audit`.
+- Freshness target: under 10 seconds behind the source change (PRD section 14). Not yet measured.
 
 ## 11. Persistence and migrations
 
@@ -301,16 +283,16 @@ All errors return `ProblemDetail` with a `correlationId` field.
 | Repository | `@DataJpaTest` with H2 | Queries, market filters, unique constraints |
 | Web and security | `@WebMvcTest` with `spring-security-test` `jwt()` | 401, 403, 404 for claimant access, role checks |
 | Messaging | `@EmbeddedKafka` | Outbox publish, consumer idempotency, DLT routing |
-| End to end | `@SpringBootTest` across services where feasible | Submission to notification |
+| End to end | `@SpringBootTest` across services where feasible | Submission to reporting snapshot |
 
-Tests map to business rules: each BR-1 to BR-10 has at least one automated test (PRD section 15).
+Tests map to business rules: each BR-1 to BR-10 has at least one automated test (PRD section 14).
 
 ## 14. Local runtime
 
 - Java 17 and Maven required.
 - Keycloak runs as a local install on `localhost:8180`, realm `claims`.
 - Kafka runs locally in KRaft mode on `localhost:9092`.
-- Start order: Keycloak, Kafka, `policy-service`, `claims-service`, `notification-service`, `reporting-service`.
+- Start order: Keycloak, Kafka, `policy-service`, `claims-service`, `reporting-service`.
 - Each service has a `local` profile for H2 file mode and local URLs.
 - Swagger UI at `http://localhost:<port>/swagger-ui.html`. OAuth2 login in Swagger uses the Keycloak URLs in `OpenApiConfig`.
 
@@ -325,7 +307,7 @@ Tests map to business rules: each BR-1 to BR-10 has at least one automated test 
 | Q5 | OTP delivery channel | Section 7.4 |
 | Q6 | Internal SLA durations for queues | Section 8 of PRD. Not yet modelled. |
 | D1 | Decided: local policy projection in claims-service, fed by `policies.changed` | Section 7.3 |
-| D2 | Decided: policy-service owns `ClaimantContact` and publishes `claimants.contact-updated` | Section 3.1, 8.1 |
+| D2 | Decided: policy-service owns `ClaimantContact` | Section 3.1 |
 | D3 | Decided: assessment-service folded into claims-service for the first release | Section 2 |
 
 ## 16. Risks
@@ -334,7 +316,6 @@ Tests map to business rules: each BR-1 to BR-10 has at least one automated test 
 - **H2 in production.** H2 is for local and test use. A production database decision is needed before deployment.
 - **Projection lag.** A new or changed policy can take a few seconds to reach claims-service, so a claim filed right after policy creation may be rejected until the projection catches up (D1).
 - **Multi-currency reporting.** Totals are per currency, so cross-market totals are not available without FX (out of scope).
-- **Personal data.** Contact details live in two places (policy-service and notification-service Recipient). Keep them in sync through `claimants.contact-updated`.
 
 ## 17. Next steps
 
@@ -342,5 +323,5 @@ Tests map to business rules: each BR-1 to BR-10 has at least one automated test 
 2. Install JDK 17 and Maven, then build `common`.
 3. Build `policy-service` and `claims-service` with their migrations and tests.
 4. Add the outbox relay and Kafka topics.
-5. Build `notification-service`, then `reporting-service`.
+5. Build `reporting-service`.
 6. Verify each endpoint in Swagger UI.

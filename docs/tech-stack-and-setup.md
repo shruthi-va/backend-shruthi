@@ -31,8 +31,7 @@ This guide lists the technology the claims platform uses and the steps to run it
 | `common` | Shared security and error handling | none (library) |
 | `policy-service` | Policies and claimant contacts | 8081 |
 | `claims-service` | Claim intake, lifecycle, reserves, queries | 8082 |
-| `notification-service` | Not yet built | 8083 (planned) |
-| `reporting-service` | Not yet built | 8084 (planned) |
+| `reporting-service` | Outstanding claims dashboard (read-only, managers only) | 8084 |
 
 ## 2. Prerequisites
 
@@ -54,9 +53,8 @@ Topics used by the platform:
 | Topic | Producer | Consumer |
 |---|---|---|
 | `policies.changed` | policy-service (outbox) | claims-service (projection) |
-| `claims.status-changed` | claims-service (outbox) | notification-service (planned) |
-| `claims.reserve-changed` | claims-service (outbox) | reporting-service (planned) |
-| `claimants.contact-updated` | policy-service (outbox) | notification-service (planned) |
+| `claims.status-changed` | claims-service (outbox) | reporting-service (snapshot) |
+| `claims.reserve-changed` | claims-service (outbox) | Not consumed yet (reserve reporting deferred) |
 
 The services create topics automatically when first used. For production, create them explicitly with the partition and retention settings agreed in the design.
 
@@ -84,6 +82,8 @@ Settings that matter when running locally. All values are in each service's `src
 | Kafka bootstrap | `localhost:9092` | `localhost:9092` |
 | Token issuer | `http://localhost:8180/realms/claims` | same |
 | Outbox relay interval | 500 ms | 500 ms |
+
+Reporting-service (port 8084) uses H2 in-memory database `jdbc:h2:mem:reportingdb`, consumes `claims.status-changed` in consumer group `reporting-service`, and keeps no REST link to claims-service. Its dashboard endpoints need the `MANAGER` role.
 
 Claims-service also reads:
 
@@ -116,9 +116,10 @@ Start Kafka and Keycloak first (section 3). Then, in separate terminals:
 ```powershell
 mvn -pl policy-service spring-boot:run -Dspring-boot.run.profiles=dev
 mvn -pl claims-service spring-boot:run -Dspring-boot.run.profiles=dev
+mvn -pl reporting-service spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
-Policy-service must be running before claims-service receives policy events, but the claims service starts without it.
+Policy-service must be running before claims-service receives policy events, but the claims service starts without it. Reporting-service fills its dashboard only from `claims.status-changed` events, so it shows data only after claims-service has published status changes.
 
 ## 7. Verify
 
@@ -128,6 +129,7 @@ Swagger UI and the OpenAPI document are **disabled by default**. They are enable
 |---|---|
 | policy-service Swagger UI | http://localhost:8081/swagger-ui.html |
 | claims-service Swagger UI | http://localhost:8082/swagger-ui.html |
+| reporting-service Swagger UI | http://localhost:8084/swagger-ui.html |
 | OpenAPI JSON (claims) | http://localhost:8082/v3/api-docs |
 
 Use the **Authorize** button in Swagger UI to sign in through Keycloak. Each API call needs a valid bearer token.
@@ -152,6 +154,6 @@ These are planned, so they are not needed to run the current services:
 
 - Docker Compose file for Kafka and Keycloak
 - Keycloak realm export
-- notification-service and reporting-service
+- Exposure and audit dashboards (reporting-service); only outstanding claims is built
 - CI pipeline
 - Production OTP provider (replacing the stub)

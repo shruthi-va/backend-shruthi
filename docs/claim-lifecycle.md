@@ -14,6 +14,4 @@ stateDiagram-v2
     REJECTED --> [*]
     SETTLED --> [*]
     WITHDRAWN --> [*]
-
-    note right of PENDING_DECISION: No claimant notification
 ```

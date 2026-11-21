@@ -316,3 +316,46 @@ A running log of conversations with the AI assistant (AI assistant using Copilot
 
 ---
 
+## 2026-11-21 16:27 (+05:30)
+
+**User:** lets not notify the claimant the status change for now lets remove that part of the code
+
+**Assistant:** Started removing the `claims.status-changed` publishing from claims-service, including the payload class and test assertions. You then reverted those edits. `ClaimEventPublisher`, `ClaimTopics`, and the two lifecycle and intake tests are back to their previous state, and `ClaimStatusChangedPayload.java` still exists. The status event is still published, so the removal is not in effect. Nothing compiled or run. Not committed.
+
+---
+
+## 2026-11-21 16:45 (+05:30)
+
+**User:** create a reporting service which will give the details of the outstanding claims
+
+**Assistant:** Reviewed the design in `docs/technical-design.md` (§3.4, §10) and `PRD.md` (§9). The reporting service is planned to consume `claims.status-changed` and `claims.reserve-changed` and serve MANAGER-only dashboards. "Outstanding" is not yet defined, and the consumption approach needs confirmation before coding. Waiting for your answers. Nothing compiled or run. Not committed.
+
+Correction: the 16:45 entry above says the service would consume `claims.reserve-changed` and serve dashboards in general. The later decisions below replace that.
+
+---
+
+## 2026-11-21 17:05 (+05:30)
+
+**User:** answered the reporting design questions: "outstanding" means non-terminal statuses; reporting uses Kafka events only, with no REST calls to claims-service; extend the status event with the fields the snapshot needs (option A).
+
+**Assistant:** Outstanding is SUBMITTED, UNDER_REVIEW, PENDING_DECISION and APPROVED. SETTLED, REJECTED and WITHDRAWN are excluded. Extended `ClaimStatusChangedPayload` in claims-service with `claimType`, `claimedAmount`, `currency` and `auditFlag`, and `ClaimEventPublisher.recordStatusChange` now fills them. This reverses the earlier revert of the publisher for this purpose only.
+Built `reporting-service` (new module, port 8084): `claim_snapshot` and `processed_event` tables, a status-changed Kafka listener, idempotent ingest that ignores older events, and two MANAGER-only endpoints under `/api/dashboards/outstanding` (`summary` and `claims`, paged). Staff get 403. Swagger is off except under `dev`. Unit and integration tests were written for it.
+Docs updated: `docs/openapi.yaml` (two reporting paths and schemas; YAML parses with 20 paths), `docs/tech-stack-and-setup.md` (port, run command, Not-yet list) and `docs/technical-design.md` (§3.4, §8.3, §10). The reserve consumer and the exposure and audit dashboards are deferred, not built.
+Nothing compiled or run, because JDK 17 and Maven are not installed. Not committed.
+
+---
+
+## 2026-11-21 17:14 (+05:30)
+
+**User:** remove Notification-service from my planning and design documents
+
+**Assistant:** Removed notification-service from the design documents. Changes:
+- `PRD.md`: removed the claimant notification scope, the notifications section and its topics and endpoints. Sections renumbered to 1 to 17.
+- `docs/technical-design.md`: removed the service row, the notification-service domain section, the notification topics and `claimants.contact-updated`, the notification rules, the channel flags, and the personal-data bullet. Consumer group is `reporting-service` only. Cross-references updated.
+- `docs/architecture.md`, `docs/claim-lifecycle.md`, `docs/submission-flows.md`, `docs/reserves-and-decisions.md`: removed the notification nodes, participants, and notes.
+- `docs/openapi.yaml`: removed the `emailOptIn` and `smsOptIn` fields and the `claimants.contact-updated` description. YAML parses with 20 paths.
+- `docs/tech-stack-and-setup.md`: removed the module row, topics, and the not-yet entry.
+- Deleted `docs/notification-flow.md`.
+Code is not changed. `policy-service` still publishes `claimants.contact-updated` and has the opt-in fields. Nothing compiled or run. Not committed.
+
+---
