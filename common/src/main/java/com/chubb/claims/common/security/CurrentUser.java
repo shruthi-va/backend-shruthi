@@ -4,6 +4,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 
 /**
  * The caller of the current request, read from the Keycloak JWT.
@@ -19,7 +21,12 @@ public record CurrentUser(String subject, String market, Set<String> roles) {
     private static final String MARKET_CLAIM = "market";
 
     public static CurrentUser from(Authentication authentication) {
-        if (!(authentication instanceof KeycloakRoleConverter.KeycloakAuthenticationToken token)) {
+        Jwt jwt;
+        if (authentication instanceof KeycloakRoleConverter.KeycloakAuthenticationToken token) {
+            jwt = token.getJwt();
+        } else if (authentication instanceof JwtAuthenticationToken token) {
+            jwt = token.getToken();
+        } else {
             throw new IllegalStateException("Unsupported authentication type: " + authentication);
         }
         Set<String> roles = authentication.getAuthorities().stream()
@@ -27,10 +34,7 @@ public record CurrentUser(String subject, String market, Set<String> roles) {
                 .filter(a -> a.startsWith(ROLE_PREFIX))
                 .map(a -> a.substring(ROLE_PREFIX.length()))
                 .collect(Collectors.toUnmodifiableSet());
-        return new CurrentUser(
-                token.getJwt().getSubject(),
-                token.getJwt().getClaimAsString(MARKET_CLAIM),
-                roles);
+        return new CurrentUser(jwt.getSubject(), jwt.getClaimAsString(MARKET_CLAIM), roles);
     }
 
     public boolean isManager() {

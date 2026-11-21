@@ -259,3 +259,26 @@ A running log of conversations with the AI assistant (AI assistant using Copilot
 **Assistant:** Asked scope (common + policy-service + claims-service) and whether to write unverified code since JDK 17 and Maven are not installed. User chose that scope and accepted unverified code. Wrote `common`, `policy-service` (domain, ports, services, JPA and outbox adapters, REST controllers) and `claims-service` (domain rules, lifecycle state machine, intake, phone verification, reserves, role-scoped queries, policy projection listener, outbox, REST controller and DTOs). Nothing compiled or tested. Deviations from the TDD to flag: OTP check sits in claims-service behind a stub (`123456`); reserves are claim-level fields, not a reserves table; no assign, queue, or dashboard routes; notification-service needs claimant contact details, which conflicts with the no-PII rule on Kafka. Not committed.
 
 ---
+
+## 2026-11-21 15:30 (+05:30)
+
+**User:** add JUnits for all services
+
+**Assistant:** Added JUnit 5 and Mockito tests for both services. policy-service: `PolicyServiceTest` and `ContactServiceTest`. claims-service: domain tests (`ClaimStatusTest`, `ClaimTest`, `ClaimRulesTest`) and application tests (`ClaimIntakeServiceTest`, `ClaimLifecycleServiceTest`, `ClaimQueryServiceTest`, `PolicyProjectionServiceTest`) with shared fixtures in `ClaimTestData`. Tests cover role rules, market and owner scoping, the filing window and audit threshold, the status state machine, reserves, OTP verification, page-size clamping, and projection revision ordering. Nothing compiled or run, because JDK 17 and Maven are not installed. Not committed.
+
+---
+
+## 2026-11-21 15:39 (+05:30)
+
+**User:** are integration test cases added
+
+**Assistant:** No. Searched the repo for `@SpringBootTest`, `@DataJpaTest`, `@WebMvcTest`, `@AutoConfigureMockMvc`, Testcontainers, and EmbeddedKafka. The only matches are in `PRD.md` and `docs/technical-design.md`, so no integration tests exist yet. Only the unit tests from the previous step are in place. Offered to add them, covering the REST endpoints, H2 persistence, and outbox relay, once JDK 17 and Maven are available.
+
+---
+## 2026-11-21 16:05 (+05:30)
+
+**User:** add intergration tests as well
+
+**Assistant:** Added integration tests for both services. claims-service: `ClaimControllerIntegrationTest` (MockMvc, nine tests covering authentication, claimant and staff scoping, filing and validation errors, phone verification, the full review-to-settle lifecycle, reserves, and list visibility) and `PolicyChangedKafkaIntegrationTest` (a `policies.changed` round trip into the projection). policy-service: `PolicyControllerIntegrationTest` (policy create and duplicate rules, claimant ownership, staff market scoping, contact recording, and claimant-only self-service contact) and `PolicyOutboxKafkaIntegrationTest` (outbox relay to `policies.changed`). Both services share a test base with an `EmbeddedKafka` broker and a stub `JwtDecoder` so the context starts without Keycloak. Changes: `CurrentUser.from` now accepts Spring's `JwtAuthenticationToken` as well as the Keycloak token type, so MockMvc JWT tests work. `spring-kafka-test` and `spring-security-test` (test scope) were added to both service POMs. Nothing compiled or run, because JDK 17 and Maven are not installed. Not committed.
+
+---
