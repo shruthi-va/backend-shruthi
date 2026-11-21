@@ -27,7 +27,10 @@ spring:
           issuer-uri: http://localhost:8180/realms/claims
 
 springdoc:
+  api-docs:
+    enabled: false
   swagger-ui:
+    enabled: false
     oauth:
       client-id: claims-swagger
 

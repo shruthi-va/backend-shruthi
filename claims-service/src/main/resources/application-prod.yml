@@ -1,0 +1,6 @@
+# Production. Swagger UI and the OpenAPI document are never exposed.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

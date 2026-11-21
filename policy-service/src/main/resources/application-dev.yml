@@ -1,0 +1,7 @@
+# Local development only. Enables Swagger UI and the OpenAPI document.
+# Activate with: --spring.profiles.active=dev
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true

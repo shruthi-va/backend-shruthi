@@ -1,0 +1,921 @@
+openapi: 3.0.3
+info:
+  title: Claims Platform API
+  version: 0.1.0
+  description: |
+    REST APIs for the claims platform (motor and property claims across the APAC markets).
+    Two services are described here: **policy-service** (policies and claimant contacts) and
+    **claims-service** (claim intake, lifecycle, reserves and queries).
+
+    Every call needs an OAuth2 bearer token issued by Keycloak. The token carries a `market` claim
+    and a realm role of `CLAIMANT`, `CLAIMS_STAFF` or `MANAGER`. Access rules are enforced per endpoint and
+    described in each operation's description.
+
+    Error responses use RFC 7807 problem details (`application/problem+json`).
+servers:
+  - url: http://localhost:8082
+    description: claims-service (local)
+  - url: http://localhost:8081
+    description: policy-service (local)
+tags:
+  - name: Policies
+    description: Policy catalogue and claimant ownership (policy-service)
+  - name: Claimant contacts
+    description: Contact details and notification preferences (policy-service)
+  - name: Claims
+    description: Claim intake, lifecycle, reserves and queries (claims-service)
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/policies:
+    get:
+      tags: [Policies]
+      operationId: listPolicies
+      summary: List policies visible to the caller
+      description: |
+        Managers see all policies, staff see policies in their market, and claimants see only policies they own.
+      responses:
+        '200':
+          description: Policies visible to the caller
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PolicyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Policies]
+      operationId: createPolicy
+      summary: Create a policy (manager)
+      description: Policy numbers are unique. A duplicate number returns 422.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePolicyRequest'
+      responses:
+        '201':
+          description: Policy created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/policies/{id}:
+    get:
+      tags: [Policies]
+      operationId: getPolicy
+      summary: Get a policy
+      description: Returns 404 when the policy is not visible to the caller, so existence is not revealed.
+      parameters:
+        - $ref: '#/components/parameters/PolicyId'
+      responses:
+        '200':
+          description: Policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/policies/{id}/owner:
+    put:
+      tags: [Policies]
+      operationId: assignPolicyOwner
+      summary: Link a policy to a claimant (manager)
+      description: Sets the claimant (token `sub`) who owns the policy. Claimants may file only against policies they own.
+      parameters:
+        - $ref: '#/components/parameters/PolicyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignOwnerRequest'
+      responses:
+        '200':
+          description: Policy updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/contacts:
+    post:
+      tags: [Claimant contacts]
+      operationId: recordContactByStaff
+      summary: Record a contact for a phone claim (staff in own market, or manager)
+      description: |
+        Staff can record contacts only in their own market (other markets return 403).
+        The contact has no owner until the claimant later verifies a phone claim.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaffContactRequest'
+      responses:
+        '201':
+          description: Contact recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/contacts/me:
+    put:
+      tags: [Claimant contacts]
+      operationId: upsertOwnContact
+      summary: Create or update the calling claimant's contact details (claimant)
+      description: |
+        Publishes a `claimants.contact-updated` event only when the contact is new or the notification
+        preferences change. Staff and managers receive 403.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OwnContactRequest'
+      responses:
+        '200':
+          description: Contact saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/claims:
+    get:
+      tags: [Claims]
+      operationId: listClaims
+      summary: List claims visible to the caller, with optional filters
+      description: |
+        Claimants see only their own claims, and staff see claims in their market. Managers see all markets.
+        The page size is clamped by the server.
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/ClaimStatus'
+        - name: claimType
+          in: query
+          schema:
+            $ref: '#/components/schemas/ClaimType'
+        - name: market
+          in: query
+          description: Market code, for example IN. Managers only, otherwise ignored for staff and claimants.
+          schema:
+            type: string
+        - name: filedFrom
+          in: query
+          description: Inclusive start date (UTC).
+          schema:
+            type: string
+            format: date
+        - name: filedTo
+          in: query
+          description: Inclusive end date (UTC).
+          schema:
+            type: string
+            format: date
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 20
+      responses:
+        '200':
+          description: A page of claims
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Claims]
+      operationId: fileOnlineClaim
+      summary: File an online claim (claimant)
+      description: |
+        The policy must be owned by the caller and the loss date must fall within the 30-day filing window.
+        Amounts at or above the audit threshold set `auditFlag`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FileClaimRequest'
+      responses:
+        '201':
+          description: Claim filed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/claims/staff-recorded:
+    post:
+      tags: [Claims]
+      operationId: recordPhoneClaim
+      summary: Record a phone claim for a contact (staff)
+      description: The contact must be in the same market as the staff member, otherwise 404 is returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaffRecordClaimRequest'
+      responses:
+        '201':
+          description: Phone claim recorded. The claimant verifies it later with `/verify`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/claims/{id}:
+    get:
+      tags: [Claims]
+      operationId: getClaim
+      summary: Get a claim
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      responses:
+        '200':
+          description: Claim
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/claims/{id}/verify:
+    post:
+      tags: [Claims]
+      operationId: verifyPhoneClaim
+      summary: Verify a phone claim with policy number and OTP (claimant)
+      description: On success the caller becomes the claim owner. The OTP check is a stub in this release.
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyClaimRequest'
+      responses:
+        '200':
+          description: Claim verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/claims/{id}/history:
+    get:
+      tags: [Claims]
+      operationId: getClaimHistory
+      summary: Get the status history of a claim
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      responses:
+        '200':
+          description: Status changes in order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StatusHistoryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/claims/{id}/withdraw:
+    post:
+      tags: [Claims]
+      operationId: withdrawClaim
+      summary: Withdraw a claim (claimant)
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      responses:
+        '200':
+          description: Claim withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/claims/{id}/review:
+    post:
+      tags: [Claims]
+      operationId: startClaimReview
+      summary: Start review (staff)
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      responses:
+        '200':
+          description: Claim is under review
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/claims/{id}/recommendation:
+    post:
+      tags: [Claims]
+      operationId: recommendClaim
+      summary: Recommend a decision (staff)
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      responses:
+        '200':
+          description: Claim is pending a manager decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/claims/{id}/decision:
+    post:
+      tags: [Claims]
+      operationId: decideClaim
+      summary: Approve or reject a recommended claim (manager)
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/claims/{id}/settle:
+    post:
+      tags: [Claims]
+      operationId: settleClaim
+      summary: Settle an approved claim (staff or manager)
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      responses:
+        '200':
+          description: Claim settled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/claims/{id}/reserves:
+    post:
+      tags: [Claims]
+      operationId: proposeReserve
+      summary: Propose a reserve (staff)
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReserveRequest'
+      responses:
+        '200':
+          description: Reserve proposed and awaiting manager approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/claims/{id}/reserves/approve:
+    post:
+      tags: [Claims]
+      operationId: approveReserve
+      summary: Approve the proposed reserve (manager)
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      responses:
+        '200':
+          description: Reserve approved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/claims/{id}/reserves/reject:
+    post:
+      tags: [Claims]
+      operationId: rejectReserve
+      summary: Reject the proposed reserve (manager)
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      responses:
+        '200':
+          description: Reserve rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OAuth2 access token issued by Keycloak (realm `claims`).
+
+  parameters:
+    PolicyId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ClaimId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Validation failed
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Forbidden:
+      description: The caller's role does not allow this action
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    NotFound:
+      description: Resource not found or not visible to the caller
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    UnprocessableEntity:
+      description: A business rule was violated, for example the filing window, a duplicate policy number, or an invalid lifecycle transition
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+  schemas:
+    ProblemDetail:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri
+
+    ProductType:
+      type: string
+      enum: [MOTOR, PROPERTY]
+
+    ClaimType:
+      type: string
+      enum: [MOTOR, PROPERTY]
+
+    ClaimStatus:
+      type: string
+      enum: [SUBMITTED, UNDER_REVIEW, PENDING_DECISION, APPROVED, REJECTED, SETTLED, WITHDRAWN]
+
+    Channel:
+      type: string
+      enum: [ONLINE, STAFF_RECORDED]
+
+    CreatePolicyRequest:
+      type: object
+      required: [policyNumber, market, productType, currency]
+      properties:
+        policyNumber:
+          type: string
+          example: POL-IN-0001
+        market:
+          type: string
+          example: IN
+        productType:
+          $ref: '#/components/schemas/ProductType'
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          example: INR
+
+    PolicyResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        policyNumber:
+          type: string
+        market:
+          type: string
+        productType:
+          $ref: '#/components/schemas/ProductType'
+        currency:
+          type: string
+        ownerSubject:
+          type: string
+          nullable: true
+          description: Claimant subject the policy is linked to, if any
+        status:
+          type: string
+        revision:
+          type: integer
+          format: int64
+          description: Increases on every change. Consumers ignore older revisions.
+        updatedAt:
+          type: string
+          format: date-time
+
+    AssignOwnerRequest:
+      type: object
+      required: [ownerSubject]
+      properties:
+        ownerSubject:
+          type: string
+          description: Keycloak subject (`sub`) of the claimant
+
+    StaffContactRequest:
+      type: object
+      required: [market, fullName]
+      properties:
+        market:
+          type: string
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          pattern: '^\+?[0-9 ()-]{6,32}$'
+          example: '+91 98765 43210'
+        emailOptIn:
+          type: boolean
+          default: false
+        smsOptIn:
+          type: boolean
+          default: false
+
+    OwnContactRequest:
+      type: object
+      required: [fullName]
+      properties:
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          pattern: '^\+?[0-9 ()-]{6,32}$'
+        emailOptIn:
+          type: boolean
+          default: false
+        smsOptIn:
+          type: boolean
+          default: false
+
+    ContactResponse:
+      type: object
+      properties:
+        contactId:
+          type: string
+          format: uuid
+        market:
+          type: string
+        fullName:
+          type: string
+        email:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        emailOptIn:
+          type: boolean
+        smsOptIn:
+          type: boolean
+
+    FileClaimRequest:
+      type: object
+      required: [policyId, claimType, dateOfLoss, claimedAmount]
+      properties:
+        policyId:
+          type: string
+          format: uuid
+        claimType:
+          $ref: '#/components/schemas/ClaimType'
+        dateOfLoss:
+          type: string
+          format: date
+          description: Must fall within 30 days before filing
+        claimedAmount:
+          type: number
+          format: decimal
+          minimum: 0.01
+
+    StaffRecordClaimRequest:
+      type: object
+      required: [policyId, contactId, claimType, dateOfLoss, claimedAmount]
+      properties:
+        policyId:
+          type: string
+          format: uuid
+        contactId:
+          type: string
+          format: uuid
+        claimType:
+          $ref: '#/components/schemas/ClaimType'
+        dateOfLoss:
+          type: string
+          format: date
+        claimedAmount:
+          type: number
+          format: decimal
+          minimum: 0.01
+
+    VerifyClaimRequest:
+      type: object
+      required: [policyNumber, otp]
+      properties:
+        policyNumber:
+          type: string
+        otp:
+          type: string
+
+    DecisionRequest:
+      type: object
+      required: [approve]
+      properties:
+        approve:
+          type: boolean
+
+    ReserveRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: number
+          format: decimal
+          minimum: 0.01
+
+    ClaimResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        claimNumber:
+          type: string
+        market:
+          type: string
+        channel:
+          $ref: '#/components/schemas/Channel'
+        policyId:
+          type: string
+          format: uuid
+        policyNumber:
+          type: string
+        ownerSubject:
+          type: string
+          nullable: true
+        contactId:
+          type: string
+          format: uuid
+          nullable: true
+        claimType:
+          $ref: '#/components/schemas/ClaimType'
+        dateOfLoss:
+          type: string
+          format: date
+        filedAt:
+          type: string
+          format: date-time
+        currency:
+          type: string
+        claimedAmount:
+          type: number
+          format: decimal
+        status:
+          $ref: '#/components/schemas/ClaimStatus'
+        auditFlag:
+          type: boolean
+          description: True when the amount is at or above the audit threshold
+        proposedReserve:
+          type: number
+          format: decimal
+          nullable: true
+        approvedReserve:
+          type: number
+          format: decimal
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+
+    ClaimPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClaimResponse'
+        page:
+          type: integer
+        size:
+          type: integer
+        totalElements:
+          type: integer
+          format: int64
+
+    StatusHistoryResponse:
+      type: object
+      properties:
+        claimId:
+          type: string
+          format: uuid
+        fromStatus:
+          $ref: '#/components/schemas/ClaimStatus'
+        toStatus:
+          $ref: '#/components/schemas/ClaimStatus'
+        actorSubject:
+          type: string
+        changedAt:
+          type: string
+          format: date-time
