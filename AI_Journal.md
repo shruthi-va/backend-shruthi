@@ -282,3 +282,37 @@ A running log of conversations with the AI assistant (AI assistant using Copilot
 **Assistant:** Added integration tests for both services. claims-service: `ClaimControllerIntegrationTest` (MockMvc, nine tests covering authentication, claimant and staff scoping, filing and validation errors, phone verification, the full review-to-settle lifecycle, reserves, and list visibility) and `PolicyChangedKafkaIntegrationTest` (a `policies.changed` round trip into the projection). policy-service: `PolicyControllerIntegrationTest` (policy create and duplicate rules, claimant ownership, staff market scoping, contact recording, and claimant-only self-service contact) and `PolicyOutboxKafkaIntegrationTest` (outbox relay to `policies.changed`). Both services share a test base with an `EmbeddedKafka` broker and a stub `JwtDecoder` so the context starts without Keycloak. Changes: `CurrentUser.from` now accepts Spring's `JwtAuthenticationToken` as well as the Keycloak token type, so MockMvc JWT tests work. `spring-kafka-test` and `spring-security-test` (test scope) were added to both service POMs. Nothing compiled or run, because JDK 17 and Maven are not installed. Not committed.
 
 ---
+
+## 2026-11-21 16:20 (+05:30)
+
+**User:** create a file under docs with tech stack required to setup the application
+
+**Assistant:** Created `docs/tech-stack-and-setup.md`. It lists the stack with versions taken from the POMs (Java 17, Maven, Spring Boot 3.3.5, springdoc 2.6.0, H2, Flyway, Spring Kafka, and the test libraries). It covers the prerequisites, the external Kafka and Keycloak setup (topics, realm, roles, `market` claim, Swagger client), the configuration per service, build and run commands, the Swagger URLs, a troubleshooting table, and what is not yet in the repo. I first wrote health-check URLs, but Actuator is not in any POM, so I removed them. Nothing compiled or run. Not committed.
+
+---
+
+
+## 2026-11-21 15:52 (+05:30)
+
+**User:** create a file in docs with swagger specs
+
+**Assistant:** Created `docs/openapi.yaml`, an OpenAPI 3.0.3 spec covering all 18 policy-service and claims-service paths. It includes the bearer security scheme, request and response schemas taken from the DTOs, enum values, and shared error responses (problem details for 400, 401, 403, 404 and 422). Servers are listed for both local ports. Checked that the YAML parses and that all 26 component references resolve. Not committed.
+
+---
+
+## 2026-11-21 15:58 (+05:30)
+
+**User:** make sure swagger is not exposed for all
+
+**Assistant:** Asked which approach to use, since requiring a token would also block the browser from loading Swagger UI. You chose to disable it by default. Set `springdoc.api-docs.enabled` and `springdoc.swagger-ui.enabled` to `false` in both services' `application.yml`. Added `application-dev.yml` in each service that turns both back on. Run with `-Dspring-boot.run.profiles=dev` to use Swagger locally. Updated `docs/tech-stack-and-setup.md` for the run commands and the Swagger section. Left the `permitAll` rules in `SecurityConfig` unchanged, since those paths return 404 when disabled. Nothing compiled or run. Not committed.
+
+---
+
+## 2026-11-21 15:59 (+05:30)
+
+**User:** disable swagger in prod
+
+**Assistant:** Added `application-prod.yml` to both services, which sets `springdoc.api-docs.enabled` and `springdoc.swagger-ui.enabled` to `false`. Swagger was already off by default, but nothing stopped the `dev` profile from being active in prod. The prod profile now overrides it when both are active. Updated the Swagger note in `docs/tech-stack-and-setup.md`. Nothing compiled or run. Not committed.
+
+---
+
