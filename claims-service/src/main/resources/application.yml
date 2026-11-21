@@ -1,0 +1,45 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: claims-service
+  datasource:
+    url: jdbc:h2:mem:claimsdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      group-id: claims-service
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8180/realms/claims
+
+springdoc:
+  swagger-ui:
+    oauth:
+      client-id: claims-swagger
+
+claims:
+  outbox:
+    relay-interval-ms: 500
+  filing-window-days: 30
+  audit-thresholds:
+    INR: 1000000
+  otp:
+    stub-code: "123456"

@@ -32,9 +32,13 @@ public class KeycloakRoleConverter implements Converter<Jwt, AbstractAuthenticat
                 .toList();
     }
 
-    static final class KeycloakAuthenticationToken extends AbstractAuthenticationToken {
+    public static final class KeycloakAuthenticationToken extends AbstractAuthenticationToken {
 
         private final Jwt jwt;
+
+        public Jwt getJwt() {
+            return jwt;
+        }
 
         KeycloakAuthenticationToken(Jwt jwt, Collection<GrantedAuthority> authorities) {
             super(authorities);
